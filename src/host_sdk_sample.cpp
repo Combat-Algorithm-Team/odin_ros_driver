@@ -23,8 +23,11 @@ limitations under the License.
 #include <memory>
 #include <opencv2/opencv.hpp>
 #include <deque> 
+#include <queue>
 #include <unistd.h> 
 #include <cstdlib>
+#include <sched.h>
+#include <pthread.h>
 #include <cstring>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -91,6 +94,14 @@ static std::deque<double> g_ptp_delay_buf;
 static std::deque<double> g_ptp_offset_buf;
 static std::atomic<double> g_ptp_delay_smooth{0.0};
 static std::atomic<double> g_ptp_offset_smooth{0.0};
+
+// IMU dedicated processing thread
+static std::atomic<bool> g_imu_thread_running(false);
+static std::thread g_imu_thread;
+static std::queue<imu_convert_data_t> g_imu_queue;
+static std::mutex g_imu_queue_mutex;
+static std::condition_variable g_imu_queue_cv;
+static const size_t IMU_QUEUE_MAX_SIZE = 200;
 
 double get_ptp_smoothed_delay() {
     return g_ptp_delay_smooth.load(std::memory_order_relaxed);
@@ -764,6 +775,105 @@ void clear_all_queues() {
     g_latest_bgr.reset();
     g_latest_rgb_timestamp = 0;
     g_has_rgb = false;
+    
+    // Clear IMU queue
+    {
+        std::lock_guard<std::mutex> lock(g_imu_queue_mutex);
+        while (!g_imu_queue.empty()) {
+            g_imu_queue.pop();
+        }
+    }
+}
+
+// IMU dedicated processing thread routine
+static void imu_thread_routine()
+{
+    // Try to set higher thread priority for IMU processing
+    pthread_t this_thread = pthread_self();
+    struct sched_param param;
+    param.sched_priority = 70;
+    
+    int ret = pthread_setschedparam(this_thread, SCHED_FIFO, &param);
+    if (ret != 0) {
+        ret = pthread_setschedparam(this_thread, SCHED_RR, &param);
+    }
+    
+    #ifdef ROS2
+        RCLCPP_INFO(rclcpp::get_logger("imu_thread"), "IMU dedicated thread started (priority: %d)", param.sched_priority);
+    #else
+        ROS_INFO("IMU dedicated thread started (priority: %d)", param.sched_priority);
+    #endif
+    
+    while (g_imu_thread_running) {
+        std::unique_lock<std::mutex> lock(g_imu_queue_mutex);
+        
+        // Wait for IMU data
+        g_imu_queue_cv.wait(lock, []() {
+            return !g_imu_queue.empty() || !g_imu_thread_running;
+        });
+        
+        if (!g_imu_thread_running) {
+            break;
+        }
+        
+        // Process all pending IMU data
+        while (!g_imu_queue.empty() && g_imu_thread_running) {
+            imu_convert_data_t imu_data = g_imu_queue.front();
+            g_imu_queue.pop();
+            lock.unlock();
+            
+            // Publish IMU data
+            if (g_ros_object && g_sendimu) {
+                g_ros_object->publishImu(&imu_data);
+            }
+            
+            lock.lock();
+        }
+    }
+    
+    #ifdef ROS2
+        RCLCPP_INFO(rclcpp::get_logger("imu_thread"), "IMU dedicated thread exiting");
+    #else
+        ROS_INFO("IMU dedicated thread exiting");
+    #endif
+}
+
+// Start IMU dedicated thread
+static void start_imu_thread()
+{
+    if (!g_imu_thread_running) {
+        g_imu_thread_running = true;
+        g_imu_thread = std::thread(imu_thread_routine);
+        #ifdef ROS2
+            RCLCPP_INFO(rclcpp::get_logger("imu_thread"), "IMU dedicated thread created");
+        #else
+            ROS_INFO("IMU dedicated thread created");
+        #endif
+    }
+}
+
+// Stop IMU dedicated thread
+static void stop_imu_thread()
+{
+    if (g_imu_thread_running) {
+        g_imu_thread_running = false;
+        g_imu_queue_cv.notify_all();
+        if (g_imu_thread.joinable()) {
+            g_imu_thread.join();
+        }
+        
+        // Clear queue
+        std::lock_guard<std::mutex> lock(g_imu_queue_mutex);
+        while (!g_imu_queue.empty()) {
+            g_imu_queue.pop();
+        }
+        
+        #ifdef ROS2
+            RCLCPP_INFO(rclcpp::get_logger("imu_thread"), "IMU dedicated thread stopped");
+        #else
+            ROS_INFO("IMU dedicated thread stopped");
+        #endif
+    }
 }
 
 // Lidar data callback
@@ -800,7 +910,15 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
         case LIDAR_DT_RAW_IMU:
             if (g_sendimu) {
                 imudata = (imu_convert_data_t *)data->stream.imageList[0].pAddr;
-                g_ros_object->publishImu(imudata);
+                // Enqueue IMU data for dedicated thread processing
+                {
+                    std::lock_guard<std::mutex> lock(g_imu_queue_mutex);
+                    if (g_imu_queue.size() >= IMU_QUEUE_MAX_SIZE) {
+                        g_imu_queue.pop();  // Drop oldest if full
+                    }
+                    g_imu_queue.push(*imudata);
+                }
+                g_imu_queue_cv.notify_one();
             }
             update_count(&imu_rx_fps);
             break;
@@ -1532,6 +1650,9 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         deviceConnected = true;
         deviceDisconnected = false;
         
+        // Start IMU dedicated thread
+        start_imu_thread();
+        
         // Start custom parameter monitoring thread
         g_param_monitor_running = true;
         g_param_monitor_thread = std::thread(custom_parameter_monitor);
@@ -1566,6 +1687,9 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
 
         deviceConnected = false;
         deviceDisconnected = true;
+        
+        // Stop IMU dedicated thread
+        stop_imu_thread();
         
         // Stop custom parameter monitoring thread
         g_param_monitor_running = false;
