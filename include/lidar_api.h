@@ -266,6 +266,29 @@ int lidar_get_custom_parameter(device_handle device, const char* param_name, int
  */
 int lidar_set_depth_parameter(device_handle device, const lidar_depth_para_t *params);
 
+/**
+ * @brief Enable or disable IMU smooth sending feature
+ *
+ * When enabled, IMU data will be sent at precise intervals (default 400Hz) 
+ * using a dedicated high-priority thread to reduce jitter and timing variance.
+ * When disabled, IMU data will be sent immediately upon reception.
+ *
+ * @param enable 1 to enable smooth sending, 0 to disable
+ * @return int 0 on success, -1 on failure
+ */
+int lidar_enable_imu_smooth_sending(int enable);
+
+/**
+ * @brief Set IMU smooth sending frequency
+ *
+ * Set the target frequency for IMU smooth sending. Only effective when 
+ * smooth sending is enabled via lidar_enable_imu_smooth_sending().
+ *
+ * @param frequency_hz Target frequency in Hz (1-1000 Hz, recommended 400 Hz)
+ * @return int 0 on success, -1 on failure
+ */
+int lidar_set_imu_smooth_frequency(uint32_t frequency_hz);
+
 #ifdef __cplusplus
 }
 #endif

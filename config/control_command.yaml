@@ -25,6 +25,14 @@ register_keys:
   # IMU data
   sendimu: 1              # 0: off; 1: on
 
+  # SDK IMU smooth sending feature
+  # When enabled, SDK will send IMU data at precise intervals (default 400Hz) 
+  # using a dedicated high-priority thread to reduce jitter and timing variance
+  enable_imu_smooth: 0    # 0: disable SDK IMU smooth sending; 1: enable (default)
+
+  # SDK IMU smooth sending frequency in Hz (only effective when enable_imu_smooth = 1)
+  imu_smooth_frequency: 400  # 1-1000 Hz, recommended 400 Hz
+
   # Odometry data
   sendodom: 1             # 0: off; 1: on
 
