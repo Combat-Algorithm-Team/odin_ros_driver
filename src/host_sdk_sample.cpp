@@ -122,7 +122,7 @@ int g_sendodom = 1;
 int g_send_odom_baselink_tf = 0;
 
 // SDK IMU smooth sending configuration
-int g_enable_imu_smooth = 1;
+int g_enable_imu_smooth = 0;
 int g_imu_smooth_frequency = 400;
 int g_sendcloudslam = 0;
 int g_sendcloudrender = 0;
@@ -1830,7 +1830,7 @@ int main(int argc, char *argv[])
         g_senddtof      = get_key_value("senddtof", 1);
         
         // SDK IMU smooth sending configuration
-        g_enable_imu_smooth = get_key_value("enable_imu_smooth", 1);
+        g_enable_imu_smooth = get_key_value("enable_imu_smooth", 0);
         g_imu_smooth_frequency = get_key_value("imu_smooth_frequency", 400);
         g_cloud_raw_confidence_threshold = get_key_value("cloud_raw_confidence_threshold", 35);
         g_rosNodeControlImpl.setCloudRawConfidenceThreshold(g_cloud_raw_confidence_threshold);
@@ -1935,26 +1935,22 @@ int main(int argc, char *argv[])
             return -1;
         }
         
-        // Configure SDK IMU smooth sending based on config
+        // Configure SDK IMU smooth sending AFTER lidar_system_init
+        // SDK now defaults to disabled, only enable if configured
         if (g_enable_imu_smooth) {
+            lidar_enable_imu_smooth_sending(1);
+            lidar_set_imu_smooth_frequency(g_imu_smooth_frequency);
             #ifdef ROS2
                 RCLCPP_INFO(node->get_logger(), "Enabling SDK IMU smooth sending at %d Hz", g_imu_smooth_frequency);
             #else
                 ROS_INFO("Enabling SDK IMU smooth sending at %d Hz", g_imu_smooth_frequency);
             #endif
-            
-            lidar_enable_imu_smooth_sending(1);
-            lidar_set_imu_smooth_frequency(g_imu_smooth_frequency);
-            
-            // Optional: Enable CSV logging for debugging
-            // lidar_enable_imu_smooth_csv_logging("./sdk_imu_send_intervals.csv");
         } else {
             #ifdef ROS2
                 RCLCPP_INFO(node->get_logger(), "SDK IMU smooth sending disabled");
             #else
                 ROS_INFO("SDK IMU smooth sending disabled");
             #endif
-            lidar_enable_imu_smooth_sending(0);
         }
         
 
