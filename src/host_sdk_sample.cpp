@@ -49,7 +49,7 @@ limitations under the License.
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.10.0"
+#define ros_driver_version "0.10.1"
 #define required_firmware_version_major 0
 #define required_firmware_version_minor 10
 #define required_firmware_version_patch 0
@@ -289,6 +289,7 @@ void collect_children(pid_t pid, std::vector<pid_t>& all) {
 }
 
 void clear_all_queues();
+static void stop_imu_thread();
 
 static bool convert_calib_to_cam_in_ex(const std::string& calib_path, const std::filesystem::path& out_path);
 
@@ -302,6 +303,9 @@ static void signal_handler(int signum) {
         #endif
 
         g_shutdown_requested = true;
+
+        // Stop IMU dedicated thread
+        stop_imu_thread();
 
         // Stop custom parameter monitoring thread
         g_param_monitor_running = false;
@@ -851,6 +855,10 @@ static void imu_thread_routine()
 static void start_imu_thread()
 {
     if (!g_imu_thread_running) {
+        // 先确保之前的线程已经结束，避免 terminate called without an active exception
+        if (g_imu_thread.joinable()) {
+            g_imu_thread.join();
+        }
         g_imu_thread_running = true;
         g_imu_thread = std::thread(imu_thread_routine);
         #ifdef ROS2
@@ -890,6 +898,11 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
 {
     // If device is not connected, ignore all data
     if (!deviceConnected) {
+        return;
+    }
+    
+    // Check g_ros_object before using it
+    if (!g_ros_object) {
         return;
     }
     
@@ -1687,20 +1700,40 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             g_rosNodeControlImpl.setDtofSubframeODR(dtof_subframe_odr);
         }
         
+        // 根据配置激活或关闭流类型
+        #ifdef ROS2
+            RCLCPP_INFO(rclcpp::get_logger("device_cb"), 
+                "Stream config: RGB=%d, IMU=%d, ODOM=%d, DTOF=%d, CLOUD_SLAM=%d",
+                g_sendrgb, g_sendimu, g_sendodom, g_senddtof, g_sendcloudslam);
+        #else
+            ROS_INFO("Stream config: RGB=%d, IMU=%d, ODOM=%d, DTOF=%d, CLOUD_SLAM=%d",
+                g_sendrgb, g_sendimu, g_sendodom, g_senddtof, g_sendcloudslam);
+        #endif
+        
         if (g_sendrgb) {
             lidar_activate_stream_type(odinDevice, LIDAR_DT_RAW_RGB);
+        } else {
+            lidar_deactivate_stream_type(odinDevice, LIDAR_DT_RAW_RGB);
         }
         if (g_sendimu) {
             lidar_activate_stream_type(odinDevice, LIDAR_DT_RAW_IMU);
+        } else {
+            lidar_deactivate_stream_type(odinDevice, LIDAR_DT_RAW_IMU);
         }
         if (g_sendodom) {
             lidar_activate_stream_type(odinDevice, LIDAR_DT_SLAM_ODOMETRY);
+        } else {
+            lidar_deactivate_stream_type(odinDevice, LIDAR_DT_SLAM_ODOMETRY);
         }
         if (g_senddtof) {
             lidar_activate_stream_type(odinDevice, LIDAR_DT_RAW_DTOF);
+        } else {
+            lidar_deactivate_stream_type(odinDevice, LIDAR_DT_RAW_DTOF);
         }
         if (g_sendcloudslam) {
             lidar_activate_stream_type(odinDevice, LIDAR_DT_SLAM_CLOUD);
+        } else {
+            lidar_deactivate_stream_type(odinDevice, LIDAR_DT_SLAM_CLOUD);
         }
         
         software_connect_timing = false;
@@ -1711,6 +1744,11 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         start_imu_thread();
         
         // Start custom parameter monitoring thread
+        // 先确保之前的线程已经结束，避免 terminate called without an active exception
+        if (g_param_monitor_thread.joinable()) {
+            g_param_monitor_running = false;
+            g_param_monitor_thread.join();
+        }
         g_param_monitor_running = true;
         g_param_monitor_thread = std::thread(custom_parameter_monitor);
         
