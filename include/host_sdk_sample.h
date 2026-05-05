@@ -860,7 +860,7 @@ void publishRgb(capture_Image_List_t *stream) {
     {
         #ifdef ROS2
                 sensor_msgs::msg::PointCloud2 msg;
-                msg.header.frame_id = "odom";
+                msg.header.frame_id = "odin1_base_link_odom";
                 msg.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
 
                 //RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Point cloudrgba %ld",stream->imageList[0].timestamp);
@@ -888,7 +888,7 @@ void publishRgb(capture_Image_List_t *stream) {
                 sensor_msgs::PointCloud2Iterator<float> iter_rgb(msg, "rgb");
         #else
             sensor_msgs::PointCloud2 msg;
-            msg.header.frame_id = "odom";
+            msg.header.frame_id = "odin1_base_link_odom";
             msg.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp);
             
             size_t pt_size = sizeof(int32_t) * 3 + sizeof(int32_t) * 4;
@@ -1134,11 +1134,11 @@ void publishRgb(capture_Image_List_t *stream) {
 #ifdef ROS2
         auto msg = nav_msgs::msg::Odometry();
         msg.header.stamp = make_aligned_stamp(odom_data->timestamp_ns, node_);
-        msg.header.frame_id = "odom";
+        msg.header.frame_id = "odin1_base_link_odom";
 #else
         nav_msgs::Odometry msg;
         msg.header.stamp = make_aligned_stamp(odom_data->timestamp_ns);
-        msg.header.frame_id = "odom";
+        msg.header.frame_id = "odin1_base_link_odom";
 #endif
         
         // Store T_CL in pose.covariance (first 16 elements)
@@ -1184,7 +1184,7 @@ void publishRgb(capture_Image_List_t *stream) {
             ros::Odometry msg;
 #endif
         
-            msg.header.frame_id = "odom";
+            msg.header.frame_id = "odin1_base_link_odom";
             msg.child_frame_id = "odin1_base_link";
 
             //RCLCPP_INFO(rclcpp::get_logger("device_cb"), "odom %ld",odom_data->timestamp_ns);
@@ -1275,7 +1275,7 @@ void publishRgb(capture_Image_List_t *stream) {
                     if (getRosNodeControl()->sendOdomBaseLinkTF()) {
                         geometry_msgs::msg::TransformStamped transformStamped;
                         transformStamped.header.stamp = msg.header.stamp;
-                        transformStamped.header.frame_id = "odom";
+                        transformStamped.header.frame_id = "odin1_base_link_odom";
                         transformStamped.child_frame_id = "odin1_base_link";
                         transformStamped.transform.translation.x = msg.pose.pose.position.x;
                         transformStamped.transform.translation.y = msg.pose.pose.position.y;
@@ -1351,7 +1351,7 @@ void publishRgb(capture_Image_List_t *stream) {
                     {
                     geometry_msgs::msg::TransformStamped transformStamped;
                     transformStamped.header.stamp = msg.header.stamp;
-                    transformStamped.header.frame_id = "odom";
+                    transformStamped.header.frame_id = "odin1_base_link_odom";
                     transformStamped.child_frame_id = "map";
                     transformStamped.transform.translation.x = msg.pose.pose.position.x;
                     transformStamped.transform.translation.y = msg.pose.pose.position.y;
@@ -1371,7 +1371,7 @@ void publishRgb(capture_Image_List_t *stream) {
                     if (getRosNodeControl()->sendOdomBaseLinkTF()) {
                         geometry_msgs::TransformStamped transformStamped;
                         transformStamped.header.stamp = msg.header.stamp;
-                        transformStamped.header.frame_id = "odom";
+                        transformStamped.header.frame_id = "odin1_base_link_odom";
                         transformStamped.child_frame_id = "odin1_base_link";
                         transformStamped.transform.translation.x = msg.pose.pose.position.x;
                         transformStamped.transform.translation.y = msg.pose.pose.position.y;
@@ -1448,7 +1448,7 @@ void publishRgb(capture_Image_List_t *stream) {
                     {
                     geometry_msgs::TransformStamped transformStamped;
                     transformStamped.header.stamp = msg.header.stamp;
-                    transformStamped.header.frame_id = "odom";
+                    transformStamped.header.frame_id = "odin1_base_link_odom";
                     transformStamped.child_frame_id = "map";
                     transformStamped.transform.translation.x = msg.pose.pose.position.x;
                     transformStamped.transform.translation.y = msg.pose.pose.position.y;
