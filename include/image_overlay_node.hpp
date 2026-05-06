@@ -55,8 +55,8 @@ private:
     std_msgs::msg::Header latest_header_;
     std::mutex mutex_;
 
-    void reprojCallback(const Image::ConstSharedPtr& msg);
-    void cameraCallback(const Image::ConstSharedPtr& msg);
+    void reprojCallback(Image::ConstSharedPtr msg);
+    void cameraCallback(Image::ConstSharedPtr msg);
     void publishOverlay();
 };
 #else
