@@ -49,7 +49,7 @@ limitations under the License.
     #include <ros/package.h>
     #include <ros/ros.h> 
 #endif
-#define ros_driver_version "0.10.2"
+#define ros_driver_version "0.10.3"
 #define required_firmware_version_major 0
 #define required_firmware_version_minor 10
 #define required_firmware_version_patch 0
@@ -1575,8 +1575,30 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 #endif
             } 
         } else if (g_custom_map_mode == 2) {
-            if (g_relocalization_map_abs_path != "" && std::filesystem::exists(g_relocalization_map_abs_path) && 
-                lidar_set_relocalization_map(odinDevice, g_relocalization_map_abs_path.c_str()) == 0) {
+            bool result = false;
+            int retryTime = 3;
+            if (g_relocalization_map_abs_path != "" && std::filesystem::exists(g_relocalization_map_abs_path)) {
+                while(retryTime-- > 0)
+                {
+                    result = (lidar_set_relocalization_map(odinDevice, g_relocalization_map_abs_path.c_str()) == 0);
+                    if(result)
+                    {
+                        break;
+                    }
+                    #ifdef ROS2
+                        RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Relocalization map set retry...,%d",retryTime);
+                    #else
+                        ROS_INFO("Relocalization map set retry...,%d",retryTime);
+                    #endif
+                }
+            } else {
+                #ifdef ROS2
+                    RCLCPP_ERROR(rclcpp::get_logger("device_cb"), "Relocalization map invlalid");
+                #else
+                    ROS_ERROR("Relocalization map invlalid");
+                #endif
+            }
+            if (result) {
                 #ifdef ROS2
                     RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Relocalization map set successfully");
                 #else
