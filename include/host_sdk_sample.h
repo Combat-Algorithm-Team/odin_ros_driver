@@ -69,7 +69,21 @@ enum class OdometryType {
 
 
 extern int g_log_level;
+extern int g_sendrgb;
+extern int g_sendimu;
+extern int g_senddtof;
+extern int g_sendodom;
+extern int g_sendodom_highfreq;
+extern int g_send_odom_baselink_tf;
+extern int g_sendcloudslam;
 extern int g_sendcloudrender;
+extern int g_sendrgb_compressed;
+extern int g_sendrgb_undistort;
+extern int g_pub_intensity_gray;
+extern int g_show_path;
+extern int g_show_camerapose;
+extern int g_custom_map_mode;
+extern int g_sendwiwc;
 extern int g_use_host_ros_time;
 double get_ptp_smoothed_delay();
 double get_ptp_smoothed_offset();
@@ -289,11 +303,13 @@ public:
         imu_msg.orientation.z = 0.0;
         imu_msg.orientation.w = 1.0;
         
-        #ifdef ROS2
-            imu_pub_->publish(std::move(imu_msg));
-        #else
+#ifdef ROS2
+            if (imu_pub_) {
+                imu_pub_->publish(std::move(imu_msg));
+            }
+#else
             imu_pub_.publish(imu_msg);
-        #endif
+#endif
 
         if(data_logger_) {
             const double ts_sec = static_cast<double>(stream->stamp) / 1e9;
@@ -557,7 +573,9 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
         }
 
         #ifdef ROS2
-            rgbcloud_pub_->publish(output_msg);
+            if (rgbcloud_pub_) {
+                rgbcloud_pub_->publish(output_msg);
+            }
         #else
             rgbcloud_pub_.publish(output_msg);
         #endif
@@ -715,7 +733,9 @@ void publishIntensityCloud(capture_Image_List_t* stream, int idx)
 
     // Publish point cloud
     #ifdef ROS2
-        cloud_pub_->publish(*msg);
+        if (cloud_pub_) {
+            cloud_pub_->publish(*msg);
+        }
     #else
         cloud_pub_.publish(msg);
     #endif
@@ -746,7 +766,9 @@ void publishGrayUInt8(capture_Image_List_t *stream, int idx) {
     memcpy(msg.data.data(), stream->imageList[idx].pAddr, image_size);
 
     #ifdef ROS2
-        intensity_gray_pub_->publish(msg);
+        if (intensity_gray_pub_) {
+            intensity_gray_pub_->publish(msg);
+        }
     #else
         intensity_gray_pub_.publish(msg);
     #endif
@@ -822,33 +844,37 @@ void publishRgb(capture_Image_List_t *stream) {
 
         #ifdef ROS2
         {
-            rgb_pub_->publish(*cv_image.toImageMsg());
-            if (m_undistort_map_init_success) {
+            if (rgb_pub_) {
+                rgb_pub_->publish(*cv_image.toImageMsg());
+            }
+            if (g_sendrgb_undistort && m_undistort_map_init_success && undistort_rgb_pub_) {
                 undistort_rgb_pub_->publish(*cv_undistorted_image.toImageMsg());
             }
 
-            // original jpeg - always publish as it's small
-            sensor_msgs::msg::CompressedImage jpeg_msg;
-            jpeg_msg.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
-            jpeg_msg.format = "jpeg";
-            jpeg_msg.data = jpeg_data;
+            if (g_sendrgb_compressed && compressed_rgb_pub_) {
+                sensor_msgs::msg::CompressedImage jpeg_msg;
+                jpeg_msg.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
+                jpeg_msg.format = "jpeg";
+                jpeg_msg.data = jpeg_data;
 
-            compressed_rgb_pub_->publish(jpeg_msg);
+                compressed_rgb_pub_->publish(jpeg_msg);
+            }
         }
         #else
         {
             rgb_pub_.publish(cv_image.toImageMsg());
-            if (m_undistort_map_init_success) {
+            if (g_sendrgb_undistort && m_undistort_map_init_success) {
                 undistort_rgb_pub_.publish(cv_undistorted_image.toImageMsg());
             }
 
-            // original jpeg
-            sensor_msgs::CompressedImagePtr jpeg_msg(new sensor_msgs::CompressedImage());
-            jpeg_msg->header.stamp = make_aligned_stamp(stream->imageList[0].timestamp);
-            jpeg_msg->format = "jpeg";
-            jpeg_msg->data = jpeg_data;
+            if (g_sendrgb_compressed) {
+                sensor_msgs::CompressedImagePtr jpeg_msg(new sensor_msgs::CompressedImage());
+                jpeg_msg->header.stamp = make_aligned_stamp(stream->imageList[0].timestamp);
+                jpeg_msg->format = "jpeg";
+                jpeg_msg->data = jpeg_data;
 
-            compressed_rgb_pub_.publish(jpeg_msg);
+                compressed_rgb_pub_.publish(jpeg_msg);
+            }
         }
         #endif
     }
@@ -983,7 +1009,9 @@ void publishRgb(capture_Image_List_t *stream) {
         }
         
 #ifdef ROS2
-            xyzrgbacloud_pub_->publish(std::move(msg));
+            if (xyzrgbacloud_pub_) {
+                xyzrgbacloud_pub_->publish(std::move(msg));
+            }
 #else
             xyzrgbacloud_pub_.publish(msg);
 #endif
@@ -1170,7 +1198,9 @@ void publishRgb(capture_Image_List_t *stream) {
         }
         
 #ifdef ROS2
-        wiwc_publisher_->publish(msg);
+        if (wiwc_publisher_) {
+            wiwc_publisher_->publish(msg);
+        }
 #else
         wiwc_publisher_.publish(msg);
 #endif
@@ -1284,9 +1314,13 @@ void publishRgb(capture_Image_List_t *stream) {
                         transformStamped.transform.rotation.y = msg.pose.pose.orientation.y;
                         transformStamped.transform.rotation.z = msg.pose.pose.orientation.z;
                         transformStamped.transform.rotation.w = msg.pose.pose.orientation.w;
-                        tf_broadcaster->sendTransform(transformStamped);
+                        if (tf_broadcaster) {
+                            tf_broadcaster->sendTransform(transformStamped);
+                        }
                     }
-                    odom_publisher_->publish(msg);
+                    if (odom_publisher_) {
+                        odom_publisher_->publish(msg);
+                    }
 
                     // Publish odom trajectory as visualization markers (green lines connecting adjacent points)
                     static visualization_msgs::msg::Marker marker;
@@ -1322,7 +1356,9 @@ void publishRgb(capture_Image_List_t *stream) {
                         static visualization_msgs::msg::MarkerArray marker_array;
                         marker_array.markers.clear();  // Clear previous markers
                         marker_array.markers.push_back(marker);
-                        path_publisher_->publish(marker_array);
+                        if (path_publisher_) {
+                            path_publisher_->publish(marker_array);
+                        }
                     }
 
                     if (show_camerapose) {
@@ -1340,27 +1376,50 @@ void publishRgb(capture_Image_List_t *stream) {
                         }
                         cameraposevisual_.reset();
                         cameraposevisual_.add_pose(P, R);
-                        cameraposevisual_.publish_by(*pub_camera_pose_visual_, msg.header);
+                        if (pub_camera_pose_visual_) {
+                            cameraposevisual_.publish_by(*pub_camera_pose_visual_, msg.header);
+                        }
                     }
                     }
                     break;
                 case OdometryType::HIGHFREQ:
-                    odom_highfreq_publisher_->publish(std::move(msg));
+                    if (odom_highfreq_publisher_) {
+                        odom_highfreq_publisher_->publish(std::move(msg));
+                    }
                     break;
                 case OdometryType::TRANSFORM:
                     {
+                    Eigen::Quaterniond odom_to_map_q(
+                        msg.pose.pose.orientation.w,
+                        msg.pose.pose.orientation.x,
+                        msg.pose.pose.orientation.y,
+                        msg.pose.pose.orientation.z);
+                    if (odom_to_map_q.norm() > 1e-6) {
+                        odom_to_map_q.normalize();
+                    } else {
+                        odom_to_map_q = Eigen::Quaterniond::Identity();
+                    }
+                    const Eigen::Vector3d odom_to_map_t(
+                        msg.pose.pose.position.x,
+                        msg.pose.pose.position.y,
+                        msg.pose.pose.position.z);
+                    const Eigen::Quaterniond map_to_odom_q = odom_to_map_q.inverse();
+                    const Eigen::Vector3d map_to_odom_t = map_to_odom_q * (-odom_to_map_t);
+
                     geometry_msgs::msg::TransformStamped transformStamped;
                     transformStamped.header.stamp = msg.header.stamp;
-                    transformStamped.header.frame_id = "odin1_base_link_odom";
-                    transformStamped.child_frame_id = "map";
-                    transformStamped.transform.translation.x = msg.pose.pose.position.x;
-                    transformStamped.transform.translation.y = msg.pose.pose.position.y;
-                    transformStamped.transform.translation.z = msg.pose.pose.position.z;
-                    transformStamped.transform.rotation.x = msg.pose.pose.orientation.x;
-                    transformStamped.transform.rotation.y = msg.pose.pose.orientation.y;
-                    transformStamped.transform.rotation.z = msg.pose.pose.orientation.z;
-                    transformStamped.transform.rotation.w = msg.pose.pose.orientation.w;
-                    tf_broadcaster->sendTransform(transformStamped);
+                    transformStamped.header.frame_id = "map";
+                    transformStamped.child_frame_id = "odom";
+                    transformStamped.transform.translation.x = map_to_odom_t.x();
+                    transformStamped.transform.translation.y = map_to_odom_t.y();
+                    transformStamped.transform.translation.z = map_to_odom_t.z();
+                    transformStamped.transform.rotation.x = map_to_odom_q.x();
+                    transformStamped.transform.rotation.y = map_to_odom_q.y();
+                    transformStamped.transform.rotation.z = map_to_odom_q.z();
+                    transformStamped.transform.rotation.w = map_to_odom_q.w();
+                    if (tf_broadcaster) {
+                        tf_broadcaster->sendTransform(transformStamped);
+                    }
                     }
                     break;
             }
@@ -1380,7 +1439,9 @@ void publishRgb(capture_Image_List_t *stream) {
                         transformStamped.transform.rotation.y = msg.pose.pose.orientation.y;
                         transformStamped.transform.rotation.z = msg.pose.pose.orientation.z;
                         transformStamped.transform.rotation.w = msg.pose.pose.orientation.w;
-                        tf_broadcaster->sendTransform(transformStamped);
+                        if (tf_broadcaster) {
+                            tf_broadcaster->sendTransform(transformStamped);
+                        }
                     }
                     odom_publisher_.publish(msg);
 
@@ -1446,18 +1507,37 @@ void publishRgb(capture_Image_List_t *stream) {
                     break;
                 case OdometryType::TRANSFORM:
                     {
+                    Eigen::Quaterniond odom_to_map_q(
+                        msg.pose.pose.orientation.w,
+                        msg.pose.pose.orientation.x,
+                        msg.pose.pose.orientation.y,
+                        msg.pose.pose.orientation.z);
+                    if (odom_to_map_q.norm() > 1e-6) {
+                        odom_to_map_q.normalize();
+                    } else {
+                        odom_to_map_q = Eigen::Quaterniond::Identity();
+                    }
+                    const Eigen::Vector3d odom_to_map_t(
+                        msg.pose.pose.position.x,
+                        msg.pose.pose.position.y,
+                        msg.pose.pose.position.z);
+                    const Eigen::Quaterniond map_to_odom_q = odom_to_map_q.inverse();
+                    const Eigen::Vector3d map_to_odom_t = map_to_odom_q * (-odom_to_map_t);
+
                     geometry_msgs::TransformStamped transformStamped;
                     transformStamped.header.stamp = msg.header.stamp;
-                    transformStamped.header.frame_id = "odin1_base_link_odom";
-                    transformStamped.child_frame_id = "map";
-                    transformStamped.transform.translation.x = msg.pose.pose.position.x;
-                    transformStamped.transform.translation.y = msg.pose.pose.position.y;
-                    transformStamped.transform.translation.z = msg.pose.pose.position.z;
-                    transformStamped.transform.rotation.x = msg.pose.pose.orientation.x;
-                    transformStamped.transform.rotation.y = msg.pose.pose.orientation.y;
-                    transformStamped.transform.rotation.z = msg.pose.pose.orientation.z;
-                    transformStamped.transform.rotation.w = msg.pose.pose.orientation.w;
-                    tf_broadcaster->sendTransform(transformStamped);
+                    transformStamped.header.frame_id = "map";
+                    transformStamped.child_frame_id = "odom";
+                    transformStamped.transform.translation.x = map_to_odom_t.x();
+                    transformStamped.transform.translation.y = map_to_odom_t.y();
+                    transformStamped.transform.translation.z = map_to_odom_t.z();
+                    transformStamped.transform.rotation.x = map_to_odom_q.x();
+                    transformStamped.transform.rotation.y = map_to_odom_q.y();
+                    transformStamped.transform.rotation.z = map_to_odom_q.z();
+                    transformStamped.transform.rotation.w = map_to_odom_q.w();
+                    if (tf_broadcaster) {
+                        tf_broadcaster->sendTransform(transformStamped);
+                    }
                     }
                     break;
             }
@@ -1674,38 +1754,94 @@ private:
                                     .reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE)
                                     .durability(RMW_QOS_POLICY_DURABILITY_VOLATILE);
 
-            imu_pub_ = node_->create_publisher<ros::Imu>("odin1/imu", qos_small);
-            rgb_pub_ = node_->create_publisher<ros::Image>("odin1/image", qos_sensor);
-            cloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_raw", qos_sensor);
-            xyzrgbacloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_slam", qos_sensor);
-            odom_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry", qos_small);
-            odom_highfreq_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry_highfreq", qos_small);
-            path_publisher_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/path", qos_sensor);
-            pub_camera_pose_visual_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/camera_pose_visual", qos_sensor);
-            rgbcloud_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("odin1/cloud_render", qos_sensor);
-            compressed_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::CompressedImage>("odin1/image/compressed", qos_small);
-            undistort_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/undistorted", qos_sensor);
-            intensity_gray_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/intensity_gray", qos_sensor);
-            wiwc_publisher_ = node_->create_publisher<ros::Odometry>("odin1/wiwc", qos_small);
-            tf_broadcaster = std::make_unique<tf2_ros::TransformBroadcaster>(node_);
+            if (g_sendimu) {
+                imu_pub_ = node_->create_publisher<ros::Imu>("odin1/imu", qos_small);
+            }
+            if (g_sendrgb) {
+                rgb_pub_ = node_->create_publisher<ros::Image>("odin1/image", qos_sensor);
+            }
+            if (g_senddtof) {
+                cloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_raw", qos_sensor);
+            }
+            if (g_sendcloudslam) {
+                xyzrgbacloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_slam", qos_sensor);
+            }
+            if (g_sendodom) {
+                odom_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry", qos_small);
+            }
+            if (g_sendodom_highfreq) {
+                odom_highfreq_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry_highfreq", qos_small);
+            }
+            if (g_show_path && g_sendodom) {
+                path_publisher_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/path", qos_sensor);
+            }
+            if (g_show_camerapose && g_sendodom) {
+                pub_camera_pose_visual_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/camera_pose_visual", qos_sensor);
+            }
+            if (g_sendcloudrender) {
+                rgbcloud_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("odin1/cloud_render", qos_sensor);
+            }
+            if (g_sendrgb && g_sendrgb_compressed) {
+                compressed_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::CompressedImage>("odin1/image/compressed", qos_small);
+            }
+            if (g_sendrgb && g_sendrgb_undistort) {
+                undistort_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/undistorted", qos_sensor);
+            }
+            if (g_pub_intensity_gray) {
+                intensity_gray_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/intensity_gray", qos_sensor);
+            }
+            if (g_sendwiwc) {
+                wiwc_publisher_ = node_->create_publisher<ros::Odometry>("odin1/wiwc", qos_small);
+            }
+            if (g_send_odom_baselink_tf || g_custom_map_mode == 2) {
+                tf_broadcaster = std::make_unique<tf2_ros::TransformBroadcaster>(node_);
+            }
         #endif
     }
     #ifdef ROS1
         void initialize_publishers(ros::NodeHandle& nh) {
-            imu_pub_ = nh.advertise<ros::Imu>("odin1/imu", 4000);
-            rgb_pub_ = nh.advertise<ros::Image>("odin1/image", 100);
-            cloud_pub_ = nh.advertise<ros::PointCloud2>("odin1/cloud_raw", 100);
-            xyzrgbacloud_pub_ = nh.advertise<ros::PointCloud2>("odin1/cloud_slam", 100);
-            odom_publisher_ = nh.advertise<ros::Odometry>("odin1/odometry", 100);
-            odom_highfreq_publisher_ = nh.advertise<ros::Odometry>("odin1/odometry_highfreq", 4000);
-            path_publisher_ = nh.advertise<visualization_msgs::MarkerArray>("odin1/path", 100);
-            pub_camera_pose_visual_ = nh.advertise<visualization_msgs::MarkerArray>("odin1/camera_pose_visual", 100);
-            rgbcloud_pub_ = nh.advertise<sensor_msgs::PointCloud2>("odin1/cloud_render", 100);
-            compressed_rgb_pub_ = nh.advertise<sensor_msgs::CompressedImage>("odin1/image/compressed", 100);
-            undistort_rgb_pub_ = nh.advertise<sensor_msgs::Image>("odin1/image/undistorted", 100);
-            intensity_gray_pub_ = nh.advertise<sensor_msgs::Image>("odin1/image/intensity_gray", 100);
-            wiwc_publisher_ = nh.advertise<ros::Odometry>("odin1/wiwc", 100);
-            tf_broadcaster = std::make_unique<tf2_ros::TransformBroadcaster>();
+            if (g_sendimu) {
+                imu_pub_ = nh.advertise<ros::Imu>("odin1/imu", 4000);
+            }
+            if (g_sendrgb) {
+                rgb_pub_ = nh.advertise<ros::Image>("odin1/image", 100);
+            }
+            if (g_senddtof) {
+                cloud_pub_ = nh.advertise<ros::PointCloud2>("odin1/cloud_raw", 100);
+            }
+            if (g_sendcloudslam) {
+                xyzrgbacloud_pub_ = nh.advertise<ros::PointCloud2>("odin1/cloud_slam", 100);
+            }
+            if (g_sendodom) {
+                odom_publisher_ = nh.advertise<ros::Odometry>("odin1/odometry", 100);
+            }
+            if (g_sendodom_highfreq) {
+                odom_highfreq_publisher_ = nh.advertise<ros::Odometry>("odin1/odometry_highfreq", 4000);
+            }
+            if (g_show_path && g_sendodom) {
+                path_publisher_ = nh.advertise<visualization_msgs::MarkerArray>("odin1/path", 100);
+            }
+            if (g_show_camerapose && g_sendodom) {
+                pub_camera_pose_visual_ = nh.advertise<visualization_msgs::MarkerArray>("odin1/camera_pose_visual", 100);
+            }
+            if (g_sendcloudrender) {
+                rgbcloud_pub_ = nh.advertise<sensor_msgs::PointCloud2>("odin1/cloud_render", 100);
+            }
+            if (g_sendrgb && g_sendrgb_compressed) {
+                compressed_rgb_pub_ = nh.advertise<sensor_msgs::CompressedImage>("odin1/image/compressed", 100);
+            }
+            if (g_sendrgb && g_sendrgb_undistort) {
+                undistort_rgb_pub_ = nh.advertise<sensor_msgs::Image>("odin1/image/undistorted", 100);
+            }
+            if (g_pub_intensity_gray) {
+                intensity_gray_pub_ = nh.advertise<sensor_msgs::Image>("odin1/image/intensity_gray", 100);
+            }
+            if (g_sendwiwc) {
+                wiwc_publisher_ = nh.advertise<ros::Odometry>("odin1/wiwc", 100);
+            }
+            if (g_send_odom_baselink_tf || g_custom_map_mode == 2) {
+                tf_broadcaster = std::make_unique<tf2_ros::TransformBroadcaster>();
+            }
         }
     #endif
 

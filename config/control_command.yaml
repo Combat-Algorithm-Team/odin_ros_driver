@@ -11,11 +11,11 @@ register_keys:
   streamctrl: 1           # 0: off; 1: on
 
   # original rgb data in jpeg format from device
-  sendrgbcompressed: 1    # 0: off; 1: on
+  sendrgbcompressed: 0    # 0: off; 1: on
 
   # RGB data, decoded from original jpeg data from device, bgr8 format
   # Processed on host device
-  sendrgb: 1              # 0: off; 1: on
+  sendrgb: 0              # 0: off; 1: on
 
   # undistort rgb image processed from decoded rgb data.
   # depends on sendrgb. related camera parameters can be found in ws/src/odin_ros_driver/config/calib.yaml
@@ -23,7 +23,7 @@ register_keys:
   sendrgbundistort: 0    # 0: off; 1: on.
 
   # IMU data
-  sendimu: 1              # 0: off; 1: on
+  sendimu: 0              # 0: off; 1: on
 
   # SDK IMU smooth sending feature
   # When enabled, SDK will send IMU data at precise intervals (default 400Hz) 
@@ -33,15 +33,19 @@ register_keys:
   # SDK IMU smooth sending frequency in Hz (only effective when enable_imu_smooth = 1)
   imu_smooth_frequency: 400  # 1-1000 Hz, recommended 400 Hz
 
-  # Odometry data
-  sendodom: 1             # 0: off; 1: on
+  # Standard odometry data
+  sendodom: 0             # 0: off; 1: on
+
+  # High frequency odometry data
+  # If omitted, it follows sendodom for backward compatibility.
+  sendodomhighfreq: 1     # 0: off; 1: on
 
   # TF from odom to base_link. Leave it on unless you specifically need it off.
   # ATTENTION: critical for rviz to show cloud_raw.
   send_odom_baselink_tf: 0 # 0: off; 1: on.
 
   # raw dtof data
-  senddtof: 1             # 0: off; 1: on
+  senddtof: 0             # 0: off; 1: on
   cloud_raw_confidence_threshold: 35 # please refer to readme for more details
   
   # dtof sensor frame rate. Supported values: 100 (10fps) or 145 (14.5fps)
@@ -54,7 +58,7 @@ register_keys:
 
   # processed with raw point cloud, rgb image, and calib.yaml from device
   # Processed on host device
-  sendcloudrender: 1      # 0: off; 1: on
+  sendcloudrender: 0      # 0: off; 1: on
 
   # depth completion demo, high computing resource usage. 
   # for more information please refer to the readme file.
@@ -79,7 +83,7 @@ register_keys:
   recorddata: 0           # 0: off; 1: on
 
   # Save device runtime status info to ws/src/odin_ros_driver/log/Driver_{drvier_start_time}/Conn_{device_connection_time}/dev_status.csv
-  devstatuslog: 1         # 0: off; 1: on.
+  devstatuslog: 0         # 0: off; 1: on.
 
   save_log: 0 # 0: off; 1: on; 
 
@@ -88,6 +92,7 @@ register_keys:
 
   showpath: 0             # 0: off; 1: on
   showcamerapose: 0       # 0: off; 1: on
+  sendwiwc: 0             # 0: off; 1: on
   
   custom_map_mode: 0      # 0: Odometry mode 1: SLAM mode 2: Relocalization mode
   custom_init_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]

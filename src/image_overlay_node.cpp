@@ -20,10 +20,16 @@ ImageOverlayNode::ImageOverlayNode(const rclcpp::NodeOptions& options)
     : Node("image_overlay_node", options)
 {
     // Read from register_keys (same structure as control_command.yaml)
+    this->declare_parameter<int>("register_keys.sendoverlay", 0);
     this->declare_parameter<std::string>("register_keys.overlay_reprojected_topic", "/odin1/reprojected_image");
     this->declare_parameter<std::string>("register_keys.overlay_camera_topic", "/odin1/image/undistorted");
     this->declare_parameter<std::string>("register_keys.overlay_output_topic", "/odin1/overlay_image");
     this->declare_parameter<double>("register_keys.overlay_alpha", 0.6);
+
+    if (this->get_parameter("register_keys.sendoverlay").as_int() == 0) {
+        RCLCPP_INFO(this->get_logger(), "Image overlay disabled by sendoverlay=0.");
+        return;
+    }
 
     reprojected_topic_ = this->get_parameter("register_keys.overlay_reprojected_topic").as_string();
     camera_topic_ = this->get_parameter("register_keys.overlay_camera_topic").as_string();
@@ -149,6 +155,13 @@ ImageOverlayNode::ImageOverlayNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     : nh_(nh), pnh_(pnh)
 {
     // Read from register_keys (same structure as control_command.yaml)
+    int sendoverlay = 0;
+    pnh_.param<int>("register_keys/sendoverlay", sendoverlay, 0);
+    if (sendoverlay == 0) {
+        ROS_INFO("Image overlay disabled by sendoverlay=0.");
+        return;
+    }
+
     pnh_.param<std::string>("register_keys/overlay_reprojected_topic", reprojected_topic_, "/odin1/reprojected_image");
     pnh_.param<std::string>("register_keys/overlay_camera_topic", camera_topic_, "/odin1/image/undistorted");
     pnh_.param<std::string>("register_keys/overlay_output_topic", overlay_topic_, "/odin1/overlay_image");

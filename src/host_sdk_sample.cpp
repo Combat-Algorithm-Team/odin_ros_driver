@@ -119,6 +119,7 @@ int g_sendrgb = 1;
 int g_sendimu = 1;
 int g_senddtof = 1;
 int g_sendodom = 1;
+int g_sendodom_highfreq = 1;
 int g_send_odom_baselink_tf = 0;
 
 // SDK IMU smooth sending configuration
@@ -133,6 +134,7 @@ int g_devstatus_log = 0;
 int g_pub_intensity_gray = 0;
 int g_show_path = 0;
 int g_show_camerapose = 0;
+int g_sendwiwc = 1;
 int g_strict_usb3_0_check = 0;
 int g_use_host_ros_time = 0;
 int g_save_log = 0;
@@ -1116,7 +1118,7 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
             break;
             case LIDAR_DT_SLAM_ODOMETRY_HIGHFREQ:
             {
-                if (g_sendodom) {
+                if (g_sendodom_highfreq) {
                     g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, OdometryType::HIGHFREQ, false, false);
                 }
                 update_count(&slam_odom_highfreq_rx_fps);
@@ -1139,8 +1141,9 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
             break;
             case LIDAR_DT_SLAM_WIWC:
             {
-                // Always publish WIWC data for real-time extrinsics
-                g_ros_object->publishWiwc((capture_Image_List_t *)&data->stream);
+                if (g_sendwiwc) {
+                    g_ros_object->publishWiwc((capture_Image_List_t *)&data->stream);
+                }
                 
                 if(g_record_data ) {
                     g_ros_object->recordrotate((capture_Image_List_t *)&data->stream);
@@ -1691,11 +1694,11 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         // 根据配置激活或关闭流类型
         #ifdef ROS2
             RCLCPP_INFO(rclcpp::get_logger("device_cb"), 
-                "Stream config: RGB=%d, IMU=%d, ODOM=%d, DTOF=%d, CLOUD_SLAM=%d",
-                g_sendrgb, g_sendimu, g_sendodom, g_senddtof, g_sendcloudslam);
+                "Stream config: RGB=%d, IMU=%d, ODOM=%d, ODOM_HIGHFREQ=%d, DTOF=%d, CLOUD_SLAM=%d",
+                g_sendrgb, g_sendimu, g_sendodom, g_sendodom_highfreq, g_senddtof, g_sendcloudslam);
         #else
-            ROS_INFO("Stream config: RGB=%d, IMU=%d, ODOM=%d, DTOF=%d, CLOUD_SLAM=%d",
-                g_sendrgb, g_sendimu, g_sendodom, g_senddtof, g_sendcloudslam);
+            ROS_INFO("Stream config: RGB=%d, IMU=%d, ODOM=%d, ODOM_HIGHFREQ=%d, DTOF=%d, CLOUD_SLAM=%d",
+                g_sendrgb, g_sendimu, g_sendodom, g_sendodom_highfreq, g_senddtof, g_sendcloudslam);
         #endif
         
         if (g_sendrgb) {
@@ -1708,7 +1711,8 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         } else {
             lidar_deactivate_stream_type(odinDevice, LIDAR_DT_RAW_IMU);
         }
-        if (g_sendodom) {
+        const bool need_odom_stream = g_sendodom || g_sendodom_highfreq || g_custom_map_mode == 2;
+        if (need_odom_stream) {
             lidar_activate_stream_type(odinDevice, LIDAR_DT_SLAM_ODOMETRY);
         } else {
             lidar_deactivate_stream_type(odinDevice, LIDAR_DT_SLAM_ODOMETRY);
@@ -1802,11 +1806,9 @@ int main(int argc, char *argv[])
 #ifdef ROS2
     rclcpp::init(argc, argv);
     auto node = std::make_shared<rclcpp::Node>("lydros_node");
-    g_ros_object = std::make_shared<MultiSensorPublisher>(node);
 #else
     ros::init(argc, argv, "lydros_node");
     ros::NodeHandle nh;
-    g_ros_object = new MultiSensorPublisher(nh);
 #endif
 
     // Register signal handlers for Ctrl+C
@@ -1862,6 +1864,7 @@ int main(int argc, char *argv[])
         g_rosNodeControlImpl.setCloudRawConfidenceThreshold(g_cloud_raw_confidence_threshold);
         g_dtof_fps      = get_key_value("dtof_fps", 145);  // Read DTOF frame rate from config (100=10fps, 145=14.5fps)
         g_sendodom      = get_key_value("sendodom", 1);
+        g_sendodom_highfreq = get_key_value("sendodomhighfreq", g_sendodom);
         g_send_odom_baselink_tf = get_key_value("send_odom_baselink_tf", 0);
         g_sendcloudslam = get_key_value("sendcloudslam", 0);
         g_sendcloudrender = get_key_value("sendcloudrender", 1);
@@ -1873,6 +1876,7 @@ int main(int argc, char *argv[])
         g_pub_intensity_gray = get_key_value("pubintensitygray", 0);
         g_show_path = get_key_value("showpath", 0);
         g_show_camerapose = get_key_value("showcamerapose", 0);
+        g_sendwiwc = get_key_value("sendwiwc", 1);
         g_log_level = get_key_value("log_devel", LOG_LEVEL_INFO);
         g_strict_usb3_0_check = get_key_value("strict_usb3.0_check", 1);
         g_use_host_ros_time = get_key_value("use_host_ros_time", 0);
@@ -1895,6 +1899,12 @@ int main(int argc, char *argv[])
         g_send_image_mask = get_key_value("sendimagemask", 0);
         g_reset_algo = get_key_value("resetalgo", 0);
         g_custom_map_mode = g_parser->getCustomMapMode(2);
+
+        #ifdef ROS2
+            g_ros_object = std::make_shared<MultiSensorPublisher>(node);
+        #else
+            g_ros_object = new MultiSensorPublisher(nh);
+        #endif
 
         lidar_log_set_level(LIDAR_LOG_INFO);
 
