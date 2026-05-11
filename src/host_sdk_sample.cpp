@@ -142,6 +142,7 @@ int g_cloud_raw_confidence_threshold = 35;
 int g_dtof_fps = 145;  // DTOF sensor frame rate: 100 (10fps) or 145 (14.5fps)
 
 std::filesystem::path log_root_dir_;
+std::filesystem::path package_root_dir_;
 int g_custom_map_mode = 0;
 bool g_relocalization_success_msg_printed = false;
 
@@ -160,6 +161,14 @@ FILE* dev_status_csv_file = nullptr;
 std::filesystem::path map_root_dir_;
 
 char driver_start_time[32];
+
+static std::filesystem::path resolve_package_relative_path(const std::string& path_text) {
+    std::filesystem::path path(path_text);
+    if (path.is_absolute() || package_root_dir_.empty()) {
+        return path;
+    }
+    return package_root_dir_ / path;
+}
 
 typedef struct  {
     struct timespec start = {0, 0};
@@ -406,6 +415,28 @@ static void custom_parameter_monitor() {
 
                         std::string map_dir = g_mapping_result_dest_dir != "" ? g_mapping_result_dest_dir : map_root_dir_.string();
                         std::string map_name = g_mapping_result_file_name != "" ? g_mapping_result_file_name : "map_" + std::string(map_save_time) + ".bin";
+                        std::filesystem::path map_dir_path(map_dir);
+                        std::filesystem::path map_path = map_dir_path / map_name;
+                        std::error_code fs_error;
+                        std::filesystem::create_directories(map_dir_path, fs_error);
+                        if (fs_error) {
+                            #ifdef ROS2
+                                RCLCPP_WARN(rclcpp::get_logger("param_monitor"), "Failed to create map directory [%s]: %s", map_dir_path.string().c_str(), fs_error.message().c_str());
+                            #else
+                                ROS_WARN("Failed to create map directory [%s]: %s", map_dir_path.string().c_str(), fs_error.message().c_str());
+                            #endif
+                        }
+                        if (g_mapping_result_file_name != "" && std::filesystem::exists(map_path)) {
+                            fs_error.clear();
+                            std::filesystem::remove(map_path, fs_error);
+                            if (fs_error) {
+                                #ifdef ROS2
+                                    RCLCPP_WARN(rclcpp::get_logger("param_monitor"), "Failed to remove old map [%s]: %s", map_path.string().c_str(), fs_error.message().c_str());
+                                #else
+                                    ROS_WARN("Failed to remove old map [%s]: %s", map_path.string().c_str(), fs_error.message().c_str());
+                                #endif
+                            }
+                        }
                         #ifdef ROS2
                             RCLCPP_INFO(rclcpp::get_logger("param_monitor"), "Map is saved on device, now transfering to [%s/%s]", map_dir.c_str(), map_name.c_str());
                         #else
@@ -1909,9 +1940,13 @@ int main(int argc, char *argv[])
         lidar_log_set_level(LIDAR_LOG_INFO);
 
         const std::filesystem::path package_dir(package_path);
+        package_root_dir_ = package_dir;
         const std::string data_dir = (package_dir / "recorddata").string();
         const std::string log_dir = (package_dir / "log").string();
         const std::string map_dir = (package_dir / "map").string();
+        if (g_relocalization_map_abs_path != "") {
+            g_relocalization_map_abs_path = resolve_package_relative_path(g_relocalization_map_abs_path).string();
+        }
 
         if (g_record_data) {
             g_ros_object->initialize_data_logger(data_dir);
@@ -1933,9 +1968,12 @@ int main(int argc, char *argv[])
             std::filesystem::create_directories(log_root_dir_);
         }
 
-        if (g_custom_map_mode == 1 && g_mapping_result_dest_dir == "") {
-            map_root_dir_ = std::filesystem::path(map_dir) / driver_start_time;
+        if (g_custom_map_mode == 1) {
+            map_root_dir_ = g_mapping_result_dest_dir != "" 
+                ? resolve_package_relative_path(g_mapping_result_dest_dir)
+                : std::filesystem::path(map_dir) / driver_start_time;
             std::filesystem::create_directories(map_root_dir_);
+            g_mapping_result_dest_dir = map_root_dir_.string();
         }
 
         if (lidar_system_init(lidar_device_callback)) {
