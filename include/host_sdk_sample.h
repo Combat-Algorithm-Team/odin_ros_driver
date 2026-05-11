@@ -103,7 +103,9 @@ double get_ptp_smoothed_offset();
     #include <nav_msgs/msg/path.hpp>
     #include <sensor_msgs/msg/point_field.hpp>
     #include "tf2/LinearMath/Quaternion.h"
+    #include "tf2_ros/buffer.h"
     #include "tf2_ros/transform_broadcaster.h"
+    #include "tf2_ros/transform_listener.h"
     namespace ros {
         using namespace rclcpp;
         using namespace std_msgs::msg;
@@ -132,6 +134,8 @@ double get_ptp_smoothed_offset();
     #include <nav_msgs/Path.h>
     #include <sensor_msgs/Image.h>
     #include <tf2_ros/transform_broadcaster.h>
+    #include <tf2_ros/buffer.h>
+    #include <tf2_ros/transform_listener.h>
     #include <tf2/LinearMath/Quaternion.h>
     #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
     namespace ros {
@@ -238,6 +242,8 @@ public:
     #ifdef ROS2
         MultiSensorPublisher(rclcpp::Node::SharedPtr node)
             : node_(node),cameraposevisual_ {1.0f, 0.0f, 0.0f, 1.0f} {
+            tf_buffer_ = std::make_unique<tf2_ros::Buffer>(node_->get_clock());
+            tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
             initialize_publishers();
             // initialize_data_logger();
         }
@@ -1206,6 +1212,46 @@ void publishRgb(capture_Image_List_t *stream) {
 #endif
     }
 
+#ifdef ROS2
+    bool initializeBaseToOdinTransform() {
+        if (base_to_odin_transform_initialized_) {
+            return true;
+        }
+
+        try {
+            const rclcpp::Time latest_tf_time(0, 0, node_->get_clock()->get_clock_type());
+            auto transform_stamped = tf_buffer_->lookupTransform(
+                "base_footprint", "odin1_base_link", latest_tf_time,
+                rclcpp::Duration::from_seconds(1.0));
+            const auto & t = transform_stamped.transform.translation;
+            const auto & q_msg = transform_stamped.transform.rotation;
+            Eigen::Quaterniond q(q_msg.w, q_msg.x, q_msg.y, q_msg.z);
+            if (q.norm() > 1e-6) {
+                q.normalize();
+            } else {
+                q = Eigen::Quaterniond::Identity();
+            }
+
+            base_to_odin_transform_.setIdentity();
+            base_to_odin_transform_.linear() = q.toRotationMatrix();
+            base_to_odin_transform_.translation() = Eigen::Vector3d(t.x, t.y, t.z);
+            base_to_odin_transform_initialized_ = true;
+
+            RCLCPP_INFO(
+                node_->get_logger(),
+                "Saved TF base_footprint <- odin1_base_link: translation = [%.5f, %.5f, %.5f]",
+                t.x, t.y, t.z);
+            return true;
+        } catch (const tf2::TransformException & ex) {
+            RCLCPP_WARN_THROTTLE(
+                node_->get_logger(), *node_->get_clock(), 1000,
+                "Waiting for TF base_footprint <- odin1_base_link before publishing map->odom: %s",
+                ex.what());
+            return false;
+        }
+    }
+#endif
+
     void publishOdometry(capture_Image_List_t* stream, OdometryType odom_type, bool show_path, bool show_camerapose) {
         
 #ifdef ROS2
@@ -1406,17 +1452,34 @@ void publishRgb(capture_Image_List_t *stream) {
                     const Eigen::Quaterniond map_to_odom_q = odom_to_map_q.inverse();
                     const Eigen::Vector3d map_to_odom_t = map_to_odom_q * (-odom_to_map_t);
 
+                    if (!initializeBaseToOdinTransform()) {
+                        break;
+                    }
+
+                    Eigen::Isometry3d odin_map_to_odin_odom = Eigen::Isometry3d::Identity();
+                    odin_map_to_odin_odom.linear() = map_to_odom_q.toRotationMatrix();
+                    odin_map_to_odin_odom.translation() = map_to_odom_t;
+                    const Eigen::Isometry3d map_to_odom =
+                        base_to_odin_transform_ * odin_map_to_odin_odom * base_to_odin_transform_.inverse();
+                    Eigen::Quaterniond nav_map_to_odom_q(map_to_odom.rotation());
+                    if (nav_map_to_odom_q.norm() > 1e-6) {
+                        nav_map_to_odom_q.normalize();
+                    } else {
+                        nav_map_to_odom_q = Eigen::Quaterniond::Identity();
+                    }
+                    const Eigen::Vector3d nav_map_to_odom_t = map_to_odom.translation();
+
                     geometry_msgs::msg::TransformStamped transformStamped;
                     transformStamped.header.stamp = msg.header.stamp;
                     transformStamped.header.frame_id = "map";
                     transformStamped.child_frame_id = "odom";
-                    transformStamped.transform.translation.x = map_to_odom_t.x();
-                    transformStamped.transform.translation.y = map_to_odom_t.y();
-                    transformStamped.transform.translation.z = map_to_odom_t.z();
-                    transformStamped.transform.rotation.x = map_to_odom_q.x();
-                    transformStamped.transform.rotation.y = map_to_odom_q.y();
-                    transformStamped.transform.rotation.z = map_to_odom_q.z();
-                    transformStamped.transform.rotation.w = map_to_odom_q.w();
+                    transformStamped.transform.translation.x = nav_map_to_odom_t.x();
+                    transformStamped.transform.translation.y = nav_map_to_odom_t.y();
+                    transformStamped.transform.translation.z = nav_map_to_odom_t.z();
+                    transformStamped.transform.rotation.x = nav_map_to_odom_q.x();
+                    transformStamped.transform.rotation.y = nav_map_to_odom_q.y();
+                    transformStamped.transform.rotation.z = nav_map_to_odom_q.z();
+                    transformStamped.transform.rotation.w = nav_map_to_odom_q.w();
                     if (tf_broadcaster) {
                         tf_broadcaster->sendTransform(transformStamped);
                     }
@@ -1863,7 +1926,11 @@ private:
         rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_camera_pose_visual_;
         rclcpp::Publisher<ros::Odometry>::SharedPtr wiwc_publisher_;
         camera_pose_visualization cameraposevisual_;
+        std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+        std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
         std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster;
+        bool base_to_odin_transform_initialized_ {false};
+        Eigen::Isometry3d base_to_odin_transform_ {Eigen::Isometry3d::Identity()};
     #else
         ros::Publisher imu_pub_;
         ros::Publisher rgb_pub_;
