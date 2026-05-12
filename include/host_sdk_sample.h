@@ -85,6 +85,8 @@ extern int g_show_camerapose;
 extern int g_custom_map_mode;
 extern int g_sendwiwc;
 extern int g_use_host_ros_time;
+extern bool g_base_to_odin_transform_configured;
+extern Eigen::Isometry3d g_base_to_odin_transform;
 double get_ptp_smoothed_delay();
 double get_ptp_smoothed_offset();
 #ifdef ROS2
@@ -103,9 +105,7 @@ double get_ptp_smoothed_offset();
     #include <nav_msgs/msg/path.hpp>
     #include <sensor_msgs/msg/point_field.hpp>
     #include "tf2/LinearMath/Quaternion.h"
-    #include "tf2_ros/buffer.h"
     #include "tf2_ros/transform_broadcaster.h"
-    #include "tf2_ros/transform_listener.h"
     namespace ros {
         using namespace rclcpp;
         using namespace std_msgs::msg;
@@ -242,8 +242,6 @@ public:
     #ifdef ROS2
         MultiSensorPublisher(rclcpp::Node::SharedPtr node)
             : node_(node),cameraposevisual_ {1.0f, 0.0f, 0.0f, 1.0f} {
-            tf_buffer_ = std::make_unique<tf2_ros::Buffer>(node_->get_clock());
-            tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
             initialize_publishers();
             // initialize_data_logger();
         }
@@ -1218,37 +1216,21 @@ void publishRgb(capture_Image_List_t *stream) {
             return true;
         }
 
-        try {
-            const rclcpp::Time latest_tf_time(0, 0, node_->get_clock()->get_clock_type());
-            auto transform_stamped = tf_buffer_->lookupTransform(
-                "base_footprint", "odin1_base_link", latest_tf_time,
-                rclcpp::Duration::from_seconds(1.0));
-            const auto & t = transform_stamped.transform.translation;
-            const auto & q_msg = transform_stamped.transform.rotation;
-            Eigen::Quaterniond q(q_msg.w, q_msg.x, q_msg.y, q_msg.z);
-            if (q.norm() > 1e-6) {
-                q.normalize();
-            } else {
-                q = Eigen::Quaterniond::Identity();
-            }
-
-            base_to_odin_transform_.setIdentity();
-            base_to_odin_transform_.linear() = q.toRotationMatrix();
-            base_to_odin_transform_.translation() = Eigen::Vector3d(t.x, t.y, t.z);
-            base_to_odin_transform_initialized_ = true;
-
-            RCLCPP_INFO(
-                node_->get_logger(),
-                "Saved TF base_footprint <- odin1_base_link: translation = [%.5f, %.5f, %.5f]",
-                t.x, t.y, t.z);
-            return true;
-        } catch (const tf2::TransformException & ex) {
+        if (!g_base_to_odin_transform_configured) {
             RCLCPP_WARN_THROTTLE(
                 node_->get_logger(), *node_->get_clock(), 1000,
-                "Waiting for TF base_footprint <- odin1_base_link before publishing map->odom: %s",
-                ex.what());
+                "base_to_odin_extrinsic_xyzrpy is not configured; cannot publish corrected map->odom");
             return false;
         }
+
+        base_to_odin_transform_ = g_base_to_odin_transform;
+        base_to_odin_transform_initialized_ = true;
+        const Eigen::Vector3d t = base_to_odin_transform_.translation();
+        RCLCPP_INFO(
+            node_->get_logger(),
+            "Loaded YAML extrinsic base_footprint -> odin1_base_link: translation = [%.5f, %.5f, %.5f]",
+            t.x(), t.y(), t.z());
+        return true;
     }
 #endif
 
@@ -1926,8 +1908,6 @@ private:
         rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_camera_pose_visual_;
         rclcpp::Publisher<ros::Odometry>::SharedPtr wiwc_publisher_;
         camera_pose_visualization cameraposevisual_;
-        std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
-        std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
         std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster;
         bool base_to_odin_transform_initialized_ {false};
         Eigen::Isometry3d base_to_odin_transform_ {Eigen::Isometry3d::Identity()};

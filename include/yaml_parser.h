@@ -87,7 +87,13 @@ private:
     std::map<std::string, std::string> register_keys_str_val_;
     std::map<std::string, ParameterValue> custom_parameters_;
 
-    std::unordered_set<std::string> allowed_key_w_str_val = {"relocalization_map_abs_path", "mapping_result_dest_dir", "mapping_result_file_name", "image_mask_abs_path"};
+    std::unordered_set<std::string> allowed_key_w_str_val = {
+        "relocalization_map_abs_path",
+        "mapping_result_dest_dir",
+        "mapping_result_file_name",
+        "base_to_odin_extrinsic_xyzrpy",
+        "image_mask_abs_path"
+    };
 };
 
 }

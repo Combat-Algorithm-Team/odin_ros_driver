@@ -39,6 +39,7 @@ limitations under the License.
 #include <cstdio>
 #include <array>
 #include <system_error>
+#include <algorithm>
 // #include <yaml-cpp/yaml.h>
 #include <iomanip>
 #include <sstream>
@@ -149,6 +150,9 @@ bool g_relocalization_success_msg_printed = false;
 std::string g_relocalization_map_abs_path = "";
 std::string g_mapping_result_dest_dir = "";
 std::string g_mapping_result_file_name = "";
+std::string g_base_to_odin_extrinsic_xyzrpy = "";
+bool g_base_to_odin_transform_configured = false;
+Eigen::Isometry3d g_base_to_odin_transform = Eigen::Isometry3d::Identity();
 
 int g_send_image_mask = 0;
 std::string g_image_mask_abs_path = "";
@@ -168,6 +172,38 @@ static std::filesystem::path resolve_package_relative_path(const std::string& pa
         return path;
     }
     return package_root_dir_ / path;
+}
+
+static bool configure_base_to_odin_transform(const std::string& xyzrpy_text) {
+    std::string normalized = xyzrpy_text;
+    std::replace(normalized.begin(), normalized.end(), ',', ' ');
+
+    std::istringstream iss(normalized);
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double roll = 0.0;
+    double pitch = 0.0;
+    double yaw = 0.0;
+    if (!(iss >> x >> y >> z >> roll >> pitch >> yaw)) {
+        return false;
+    }
+
+    std::string extra;
+    if (iss >> extra) {
+        return false;
+    }
+
+    const Eigen::AngleAxisd roll_angle(roll, Eigen::Vector3d::UnitX());
+    const Eigen::AngleAxisd pitch_angle(pitch, Eigen::Vector3d::UnitY());
+    const Eigen::AngleAxisd yaw_angle(yaw, Eigen::Vector3d::UnitZ());
+    const Eigen::Quaterniond rotation = yaw_angle * pitch_angle * roll_angle;
+
+    g_base_to_odin_transform.setIdentity();
+    g_base_to_odin_transform.linear() = rotation.normalized().toRotationMatrix();
+    g_base_to_odin_transform.translation() = Eigen::Vector3d(x, y, z);
+    g_base_to_odin_transform_configured = true;
+    return true;
 }
 
 typedef struct  {
@@ -1925,11 +1961,50 @@ int main(int argc, char *argv[])
         g_relocalization_map_abs_path = get_key_str_value("relocalization_map_abs_path", "");
         g_mapping_result_dest_dir = get_key_str_value("mapping_result_dest_dir", "");
         g_mapping_result_file_name = get_key_str_value("mapping_result_file_name", "");
+        g_base_to_odin_extrinsic_xyzrpy = get_key_str_value("base_to_odin_extrinsic_xyzrpy", "");
         g_image_mask_abs_path = get_key_str_value("image_mask_abs_path", "");
 
         g_send_image_mask = get_key_value("sendimagemask", 0);
         g_reset_algo = get_key_value("resetalgo", 0);
         g_custom_map_mode = g_parser->getCustomMapMode(2);
+
+        g_base_to_odin_transform_configured = false;
+        g_base_to_odin_transform = Eigen::Isometry3d::Identity();
+        if (g_base_to_odin_extrinsic_xyzrpy != "") {
+            if (!configure_base_to_odin_transform(g_base_to_odin_extrinsic_xyzrpy)) {
+                #ifdef ROS2
+                    RCLCPP_ERROR(
+                        node->get_logger(),
+                        "Invalid base_to_odin_extrinsic_xyzrpy: '%s'. Expected: x y z roll pitch yaw",
+                        g_base_to_odin_extrinsic_xyzrpy.c_str());
+                #else
+                    ROS_ERROR(
+                        "Invalid base_to_odin_extrinsic_xyzrpy: '%s'. Expected: x y z roll pitch yaw",
+                        g_base_to_odin_extrinsic_xyzrpy.c_str());
+                #endif
+                return -1;
+            }
+            const Eigen::Vector3d t = g_base_to_odin_transform.translation();
+            #ifdef ROS2
+                RCLCPP_INFO(
+                    node->get_logger(),
+                    "Configured YAML extrinsic base_footprint -> odin1_base_link: translation = [%.5f, %.5f, %.5f]",
+                    t.x(), t.y(), t.z());
+            #else
+                ROS_INFO(
+                    "Configured YAML extrinsic base_footprint -> odin1_base_link: translation = [%.5f, %.5f, %.5f]",
+                    t.x(), t.y(), t.z());
+            #endif
+        } else if (g_custom_map_mode == 2) {
+            #ifdef ROS2
+                RCLCPP_ERROR(
+                    node->get_logger(),
+                    "base_to_odin_extrinsic_xyzrpy is required in relocalization mode");
+            #else
+                ROS_ERROR("base_to_odin_extrinsic_xyzrpy is required in relocalization mode");
+            #endif
+            return -1;
+        }
 
         #ifdef ROS2
             g_ros_object = std::make_shared<MultiSensorPublisher>(node);
