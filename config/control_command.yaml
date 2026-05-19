@@ -45,7 +45,7 @@ register_keys:
   send_odom_baselink_tf: 0 # 0: off; 1: on.
 
   # raw dtof data
-  senddtof: 0             # 0: off; 1: on
+  senddtof: 1             # 0: off; 1: on
   cloud_raw_confidence_threshold: 35 # please refer to readme for more details
   
   # dtof sensor frame rate. Supported values: 100 (10fps) or 145 (14.5fps)
@@ -54,7 +54,7 @@ register_keys:
   dtof_fps: 100           # 100: 10fps; 145: 14.5fps
 
   # slam cloud data
-  sendcloudslam: 1        # 0: off; 1: on
+  sendcloudslam: 0        # 0: off; 1: on
 
   # processed with raw point cloud, rgb image, and calib.yaml from device
   # Processed on host device
